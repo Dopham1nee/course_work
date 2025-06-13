@@ -33,7 +33,7 @@ def calc_err(x_analytics, x, method: str, h: float, logger) -> float:
 
     errs = []
     for i in range(0, len(x_analytics)):
-        err = np.abs(x[i] - x_analytics[i])
+        err = np.abs((x[i] - x_analytics[i]) / x_analytics[i])
         errs.append(err)
         logger.debug('%s_err[%i] = %.8f', method, i, err)
 
