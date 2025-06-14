@@ -4,8 +4,6 @@ import logging as log
 import numpy as np
 import matplotlib.pyplot as plt
 
-import sympy_solve as sp_solve
-
 # read json input and parse it
 def read_input(filename: str) -> tuple[float, float, float, list[float]]:
     with open(filename) as f:
@@ -19,13 +17,17 @@ def f(v0, s, r) -> float: return v0 * np.exp(s ** 2 / 2)
 def rhs(v, s) -> float: return v * s
 
 
-def rich(v_h2, v_h, p) -> np.ndarray:
-        v_rich = np.zeros(len(v_h2))
+def richardson_accuracy(y_h, y_h2, y_h4):
+    p_vals = []
+    for i in range(len(y_h)):
+        numerator = y_h[i] - y_h2[2 * i]
+        denominator = y_h2[2 * i] - y_h4[4 * i]
+        if np.abs(denominator) < 1e-12:
+            continue
+        else:
+            p_vals.append(np.log2(np.abs(numerator / denominator)))
+    return np.percentile(p_vals, 95)
 
-        for i in range(len(v_h2)):
-            v_rich[i] = (2 ** p * v_h[2 * i] - v_h2[i]) / (2 ** p - 1)
-        
-        return v_rich
 
 
 def calc_err(x_analytics, x, method: str, h: float, logger) -> float:
@@ -33,7 +35,7 @@ def calc_err(x_analytics, x, method: str, h: float, logger) -> float:
 
     errs = []
     for i in range(0, len(x_analytics)):
-        err = np.abs((x[i] - x_analytics[i]) / x_analytics[i])
+        err = np.abs((x[i] - x_analytics[i]) / x_analytics[i]) * 100
         errs.append(err)
         logger.debug('%s_err[%i] = %.8f', method, i, err)
 
@@ -63,9 +65,6 @@ class Solver():
 
         self.euler_errs = np.zeros(len(self.h))
         self.adams_errs = np.zeros(len(self.h))
-
-        self.rich_euler_errs = np.zeros(len(self.h) - 1)
-        self.rich_adams_errs = np.zeros(len(self.h) - 1)
 
     # based on sympy solution
     def solve_analytics(self):
@@ -104,15 +103,6 @@ class Solver():
     
     def calc_errors(self):
         for i in range(len(self.n)):
-            if i != 0:
-                self.rich_euler_errs[i - 1] = calc_err(
-                    self.v_analytics[i - 1], self.euler_rich[i - 1],
-                    'euler with richardson', self.h[i - 1], self.logger)
-
-                self.rich_adams_errs[i - 1] = calc_err(
-                    self.v_analytics[i - 1], self.adams_rich[i - 1],
-                    'adams with richardson', self.h[i - 1], self.logger)
-
             self.euler_errs[i] = calc_err(
                 self.v_analytics[i], self.euler_vals[i],
                 'euler', self.h[i], self.logger)
@@ -123,12 +113,15 @@ class Solver():
 
         euler_slope, _  = np.polyfit(np.log(self.h), np.log(self.euler_errs), deg=1)
         adams_slope, _ = np.polyfit(np.log(self.h), np.log(self.adams_errs), deg=1)
-        euler_slope_rich, _ = np.polyfit(np.log(self.h[:-1]), np.log(self.rich_euler_errs), deg=1)
-        adams_slope_rich, _ = np.polyfit(np.log(self.h[:-1]), np.log(self.rich_adams_errs), deg=1)
         self.logger.warning('Euler method accuracy: %.2f', euler_slope)
         self.logger.warning('Adams method accuracy: %.2f', adams_slope)
-        self.logger.warning('Euler method with extrapolation accuracy: %.2f', euler_slope_rich)
-        self.logger.warning('Adams method with extrapolation accuracy: %.2f', adams_slope_rich)
+
+        self.logger.warning(
+            'Euler method with extrapolation accuracy: %.2f',
+            richardson_accuracy(self.euler_vals[-3], self.euler_vals[-2], self.euler_vals[-1]))
+        self.logger.warning(
+            'Adams method with extrapolation accuracy: %.2f',
+            richardson_accuracy(self.adams_vals[-3], self.adams_vals[-2], self.adams_vals[-1]))
 
     def plot_solve(self, axs):
         cnt = len(self.h) // 2
@@ -154,12 +147,19 @@ class Solver():
 
     def plot_errs(self, axs):
         log_h = np.log(self.h)
-        x_err = np.linspace(-4, 0, 6)
-        y_euler = np.array([x for x in x_err])
-        y_adams = np.array([4 * x for x in x_err])
+        log_euler = np.log(self.euler_errs)
+        log_adams = np.log(self.adams_errs)
+        
+        # calculating b from equal y = p * x + b
+        # p - accuracy of the method
+        b_euler = log_euler[0] - log_h[0]
+        b_adams = log_adams[0] - 4 * log_h[0]
 
-        axs.plot(x_err, y_euler, '--', label='Теор. точность метода Эйлера (точность = 1.0)')
-        axs.plot(x_err, y_adams, '--', label='Теор. точность метода Адамса (точность = 4.0)')
+        y_euler = np.array([(x + b_euler) for x in log_h])
+        y_adams = np.array([(4 * x + b_adams) for x in log_h])
+
+        axs.plot(log_h, y_euler, '--', label='Теор. точность метода Эйлера (точность = 1.0)')
+        axs.plot(log_h, y_adams, '--', label='Теор. точность метода Адамса (точность = 4.0)')
 
         axs.plot(log_h, np.log(self.euler_errs), '-o', label='метод Эйлера')
         axs.plot(log_h, np.log(self.adams_errs), '-o', label='метод Адамса-Башфорта')
@@ -176,9 +176,6 @@ class Solver():
         for i in range(len(self.h)):
             self.solve_euler(i)
             self.solve_adams(i)
-            if i != 0:
-                self.euler_rich[i - 1] = rich(self.euler_vals[i - 1], self.euler_vals[i], 1)
-                self.adams_rich[i - 1] = rich(self.adams_vals[i - 1], self.adams_vals[i], 4)
 
         self.calc_errors()
         self.plot_solve(axs[0])
@@ -210,9 +207,6 @@ def main():
 
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
-
-    # print solution from sympy
-    logger.warning('Аналитическое решение через sympy: %s', sp_solve.solve())
 
     _, axs = plt.subplots(2, 1, figsize=(10, 10))
 
