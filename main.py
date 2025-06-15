@@ -1,17 +1,18 @@
 import json
 import logging as log
+import os
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 # read json input and parse it
-def read_input(filename: str) -> tuple[float, float, float, list[float]]:
+def read_input(filename: str) -> tuple[bool, float, float, list[float]]:
     with open(filename) as f:
         input = json.load(f)
-        return input['r'], input['v0'], input['s_max'], input['h']
+        return input['debug'], input['v0'], input['s_max'], input['h']
 
 
-def f(v0, s, r) -> float: return v0 * np.exp(s ** 2 / 2)
+def f(v0, s) -> float: return v0 * np.exp(s ** 2 / 2)
 
 
 def rhs(v, s) -> float: return v * s
@@ -47,8 +48,8 @@ def calc_err(x_analytics, x, method: str, h: float, logger) -> float:
 # class to avoid static and global values
 class Solver():
     def __init__(self, filename: str) -> None:
-        r, v0, s_max, h = read_input(filename)
-        self.r = r
+        debug, v0, s_max, h = read_input(filename)
+        self.debug = debug
         self.v0 = v0
         self.h = h
         self.s_max = s_max
@@ -69,7 +70,7 @@ class Solver():
     # based on sympy solution
     def solve_analytics(self):
         self.v_analytics = [
-            [f(self.v0, s, self.r) for s in s_val]
+            [f(self.v0, s) for s in s_val]
             for s_val in self.s_vals
         ]
 
@@ -126,7 +127,7 @@ class Solver():
     def plot_solve(self, axs):
         cnt = len(self.h) // 2
         x_vals = np.linspace(0, self.s_max, 3000)
-        y_vals = np.array([f(self.v0, x, self.r) for x in x_vals])
+        y_vals = np.array([f(self.v0, x) for x in x_vals])
         
         axs.plot(x_vals, y_vals, label='Аналитическое решение', linewidth=2)
         # Euler solutions
@@ -170,7 +171,7 @@ class Solver():
         axs.legend()
         axs.grid(True)
                 
-    def run(self, axs):
+    def run(self, axs, fig):
         self.solve_analytics()
 
         for i in range(len(self.h)):
@@ -182,7 +183,12 @@ class Solver():
         self.plot_errs(axs[1])
 
         plt.tight_layout()
-        plt.show()
+        if self.debug:
+            plt.show()
+        else:
+            if not os.path.exists('out'):
+                os.mkdir('out')
+            fig.savefig('out/result.png', dpi=100)
 
     def set_logger(self, logger): self.logger = logger
 
@@ -208,11 +214,11 @@ def main():
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
-    _, axs = plt.subplots(2, 1, figsize=(10, 10))
+    fig, axs = plt.subplots(2, 1, figsize=(10, 10))
 
     solver = Solver('input.json')
     solver.set_logger(logger)
-    solver.run(axs)
+    solver.run(axs, fig)
 
 
 if __name__ == "__main__":
